@@ -10,14 +10,15 @@
 
 #define MAX_SERVERS 16
 
-typedef struct {
+typedef struct serv_t serv_t;
+struct serv_t {
     char   *name;
     char   *ip;
     char   *port;
     int     fd;
     int     connected;
     serv_t *next;
-} serv_t;
+};
 
 /**
  * @brief Parse the configuration file
@@ -54,18 +55,19 @@ int parseConfig(char *path, serv_t servlist[]) {
                 }
                 break;
             case 1:
-                servlist->name = token;
+                servlist->name = strdup(token);
                 break;
             case 2:
-                servlist->ip = token;
+		token = strtok(token, ":");
+                servlist->ip = strdup(token);
                 break;
             case 3:
-                servlist->port = token;
+                servlist->port = strdup(token);
                 break;
             default:
                 break;
             }
-            token = strtok(NULL, " ");
+	    token = strtok(NULL, " ");
             i++;
         }
         if (i < 4) {
@@ -96,5 +98,8 @@ int main(int argc, char *argv[]) {
     char  *path = argv[1];
     serv_t servlist[MAX_SERVERS];
     int    num_servers = parseConfig(path, servlist);
+    for (size_t i = 0; i < num_servers; i++) {
+        printf("[%lu] %s:%s\t(%s)\n", i, servlist[i].ip, servlist[i].port, servlist[i].name);
+    }
     return 0;
 }
