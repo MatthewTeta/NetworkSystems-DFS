@@ -37,6 +37,7 @@ int parseConfig(char *path, serv_t servlist[]) {
         perror("fopen");
         return 0;
     }
+    servlist->next = NULL;
     int     num_servers = 0;
     serv_t *old         = NULL;
     char   *line        = NULL;
@@ -73,6 +74,9 @@ int parseConfig(char *path, serv_t servlist[]) {
         if (i < 4) {
             goto nextline;
         }
+	// Fill out the rest of the serv_t values:
+	servlist->fd = -1;
+	servlist->connected = 0;
         if (old != NULL) {
             old->next = servlist;
         }
@@ -85,9 +89,23 @@ int parseConfig(char *path, serv_t servlist[]) {
         fprintf(stderr, "Warning: Max number of servers reached (%d)\n",
                 MAX_SERVERS);
     }
+    if (old != NULL) {
+	old->next = NULL;
+    }
     free(line);
     fclose(fp);
     return num_servers;
+}
+
+void servlist_print(serv_t servlist[]) {
+    while (servlist) {
+        printf("[%s]\t%s:%s (%d)", servlist->name, servlist->port, servlist->ip, servlist->fd);
+	if (servlist->connected) {
+	    printf("(connected)");
+	}
+	puts("");
+        servlist = servlist->next;
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -98,8 +116,7 @@ int main(int argc, char *argv[]) {
     char  *path = argv[1];
     serv_t servlist[MAX_SERVERS];
     int    num_servers = parseConfig(path, servlist);
-    for (size_t i = 0; i < num_servers; i++) {
-        printf("[%lu] %s:%s\t(%s)\n", i, servlist[i].ip, servlist[i].port, servlist[i].name);
-    }
+    servlist_print(servlist);
+
     return 0;
 }
