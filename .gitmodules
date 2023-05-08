@@ -1,0 +1,3 @@
+[submodule "libraries/md5"]
+	path = libraries/md5
+	url = https://github.com/Zunawe/md5-c.git
