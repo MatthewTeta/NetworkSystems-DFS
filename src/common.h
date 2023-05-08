@@ -13,6 +13,7 @@
 #define COMMON_H
 
 #define MAX_CLIENTS 16
-#define MAX_PATH    256 // Max path length (including null terminator)
+#define CHUNK_SIZE  (1024)	// 1Ki bytes
+#define CHUNK_MAX   0x80000000	// 2Ti byte file max on Ubuntu
 
 #endif                  // COMMON_H
