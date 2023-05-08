@@ -20,6 +20,8 @@
 #include <sys/types.h>
 #include <stdint.h>
 
+#include "md5.h"
+
 #define CHUNK_SIZE 	(1024)	// 1Ki byte chunks
 #define REDUNDENCY 	2				// Minimum number of servers to store each chunk on
 #define NUM_SERVERS	4
@@ -59,23 +61,32 @@ int main(int argc, char *argv[]) {
     filename++;
     printf("filename: %s\n", filename);
 
+    // Hash the file name
+    uint8_t hash[16];
+    char    hash_str[33];
+    md5String(filename, hash);
+    for (int i = 0; i < 16; i++) {
+        sprintf(hash_str + (i * 2), "%02x", hash[i]);
+    }
+    printf("hash: %s\n", hash);
+
     // Hash the file contents
-	char cmd[PATH_MAX + 8];
-    char hash[33];
+    char cmd[PATH_MAX + 8];
+    char checksum[33];
     bzero(cmd, PATH_MAX + 8);
-    bzero(hash, 33);
+    bzero(checksum, 33);
 	sprintf(cmd, "md5sum %s", filepath);
-    FILE * f_hash = popen(cmd, "r");
-    if (f_hash == NULL) {
+    FILE * f_checksum = popen(cmd, "r");
+    if (f_checksum == NULL) {
         perror("popen");
         exit(1);
     }
-    if (fread(hash, 1, 32, f_hash) != 32) {
+    if (fread(checksum, 1, 32, f_checksum) != 32) {
         perror("fread");
         exit(1);
     }
-    pclose(f_hash);
-    printf("hash: %s\n", hash);
+    pclose(f_checksum);
+    printf("checksum: %s\n", checksum);
 
 	// Stat the file
     struct stat st;
@@ -96,6 +107,11 @@ int main(int argc, char *argv[]) {
 
 	// TODO: Ensure there are at least 4 servers available for writing
 
+	// Produce URI
+	char base_name[PATH_MAX / 2];
+	bzero(base_name, PATH_MAX / 2);
+	snprintf(base_name, PATH_MAX / 2, "%s.%lu.%u", hash_str, mtime, client_id);
+
 	// Distribute chunks among available servers with REDUNDENCY
 	puts("Chunk Map:\t(chunk)\t->\t(serv_id)");
 	for (size_t chunk_id = 0; chunk_id < num_chunks; chunk_id++) {
@@ -103,10 +119,37 @@ int main(int argc, char *argv[]) {
 			size_t serv_id = (hash[0] + chunk_id + r) % NUM_SERVERS;
 			char chunk_name[PATH_MAX];
 			bzero(chunk_name, PATH_MAX);
-			snprintf(chunk_name, PATH_MAX, "%s.%lu.%u.%08lX", hash, mtime, client_id, chunk_id);
+			snprintf(chunk_name, PATH_MAX, "%s.%08lX", base_name, chunk_id);
 			printf("\t\t[%lu]\t->\t{%lu}\t\t%s\n", chunk_id, serv_id, chunk_name);
 		}
 	}
+
+	// Generate the manifest path
+	char manifest_path[PATH_MAX];
+	bzero(manifest_path, PATH_MAX);
+	snprintf(manifest_path, PATH_MAX, "manifests/%s", base_name);
+
+	mkdir("manifests", 0777);
+
+	// Create the manifest file locally:
+	FILE *f_manifest = fopen(manifest_path, "w");
+	if (f_manifest == NULL) {
+		perror("fopen");
+		exit(1);
+	}
+
+	fprintf(f_manifest, "filename: %s\n", filename);
+	fprintf(f_manifest, "hash: %s\n", hash_str);
+	fprintf(f_manifest, "mtime: %lu\n", mtime);
+	fprintf(f_manifest, "client_id: %u\n", client_id);
+	fprintf(f_manifest, "size: %ld\n", size);
+	fprintf(f_manifest, "CHUNK_SIZE: %d\n", CHUNK_SIZE);
+	fprintf(f_manifest, "full_chunks: %lu\n", full_chunks);
+	fprintf(f_manifest, "num_chunks: %lu\n", num_chunks);
+	fprintf(f_manifest, "residual_len: %lu\n", residual_len);
+	fprintf(f_manifest, "checksum: %s\n", checksum);
+
+	fclose(f_manifest);
 
     return 0;
 }
