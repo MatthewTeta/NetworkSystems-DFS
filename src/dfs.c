@@ -16,6 +16,9 @@
  */
 
 #include <arpa/inet.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +41,13 @@ int          port         = 8080;
 
 // Function prototypes
 void handle_request(int fd, char *ip);
+void handle__GET(int fd);
+void handle__PUT(int fd);
+void handle_LIST(int fd);
+
+// Global variables
+char manif_path[PATH_MAX / 2] = {0};
+char chunk_path[PATH_MAX / 2] = {0};
 
 void printUsage(char *argv[]) {
     printf("Usage: %s <directory> <port>\n", argv[0]);
@@ -62,10 +72,8 @@ int main(int argc, char *argv[]) {
     // Make the directory
     mkdir(dir_path, 0777);
     // Also make the manifests directory and the chunks directory
-    char manif_path[PATH_MAX] = {0};
-    char chunk_path[PATH_MAX] = {0};
-    snprintf(manif_path, PATH_MAX, "%s/manif", dir_path);
-    snprintf(chunk_path, PATH_MAX, "%s/chunk", dir_path);
+    snprintf(manif_path, PATH_MAX / 2, "%s/manif", dir_path);
+    snprintf(chunk_path, PATH_MAX / 2, "%s/chunk", dir_path);
     mkdir(manif_path, 0777);
 
     // Create the socket
@@ -191,11 +199,104 @@ void handle_request(int fd, char *ip) {
     case FTP_CMD_PUT:
         printf("PUT request from %s\n", ip);
         break;
-    case FTP_CMD_LS:
+    case FTP_CMD_LIST:
         printf("LS request from %s\n", ip);
         break;
     default:
         printf("Unknown request from %s\n", ip);
+        // TODO: Send an error message
         break;
     }
+}
+
+// Handle a GET request
+void handle__GET(int fd) {
+    // Receive the file name
+    ftp_msg_t chunk = {0};
+    ftp_recv_msg(fd, &chunk);
+    char *file_name = chunk.packet;
+
+    // Open the file
+    int file = open(file_name, O_RDONLY);
+    if (file == -1) {
+        // If the file doesn't exist, send an error message
+        ftp_send_msg(fd, FTP_CMD_ERROR, "File not found", -1);
+        return;
+    }
+
+    // Send the file
+    ftp_send_data(fd, file);
+
+    // Close the file
+    close(file);
+}
+
+// Handle a put request
+void handle__PUT(int fd) {
+    // Receive the file name
+    ftp_msg_t chunk = {0};
+    ftp_recv_msg(fd, &chunk);
+    char *file_name = chunk.packet;
+
+    // Create the file
+    int file = open(file_name, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+
+    // Receive into the file
+    ftp_recv_data(fd, file);
+
+    // Close the file
+    close(file);
+}
+
+// Handle a list request
+void handle_LIST(int fd) {
+    // List all files in the manifest directory
+    char          *manifests[MAX_FILES] = {0};
+    int            num_manifests        = 0;
+    DIR           *dirp                 = opendir(manif_path);
+    struct dirent *entry                = NULL;
+    while ((entry = readdir(dirp)) != NULL) {
+        if (num_manifests == PATH_MAX) {
+            fprintf(stderr, "Too many manifest files\n");
+            exit(EXIT_FAILURE);
+        }
+        if (entry->d_type == DT_REG) {
+            // Add the file to the list
+            manifests[num_manifests] = entry->d_name;
+            num_manifests++;
+        }
+    }
+    // Read all manifest files
+    for (char **manifest = manifests; *manifest != NULL; manifest++) {
+        // Send the manifest file name to the client (FTP_CMD_PUT)
+        ftp_send_msg(fd, FTP_CMD_PUT, *manifest, -1);
+        // Open the file
+        char path[PATH_MAX] = {0};
+        snprintf(path, PATH_MAX, "%s/%s", manif_path, *manifest);
+        FILE *fp = fopen(path, "r");
+        if (fp == NULL) {
+            perror("fopen");
+            exit(EXIT_FAILURE);
+        }
+        // Read the file
+        char buf[FTP_PACKET_SIZE] = {0};
+        fread(buf, sizeof(char), FTP_PACKET_SIZE, fp);
+        // Send the file to the client
+        ftp_send_data(fd, fileno(fp));
+        fclose(fp);
+    }
+
+    // Run ls -l
+    char cmd[PATH_MAX + 7] = {0};
+    snprintf(cmd, PATH_MAX + 7, "ls -l %s", chunk_path);
+    FILE *fp = popen(cmd, "r");
+    if (fp == NULL) {
+        perror("popen");
+        exit(EXIT_FAILURE);
+    }
+    // Send an empty LIST delimiter (FTP_CMD_LIST)
+    ftp_send_msg(fd, FTP_CMD_LIST, NULL, 0);
+    // Send the output to the client
+    ftp_send_data(fd, fileno(fp));
+    pclose(fp);
 }

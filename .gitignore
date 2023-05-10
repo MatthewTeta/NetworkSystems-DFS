@@ -11,6 +11,7 @@ dfc.conf
 libraries/bin
 libraries/include
 tests/manifest
-tests/parse_config
+tests/parse_conf
 tests/dfs?/
 .vscode
+tests/manifests

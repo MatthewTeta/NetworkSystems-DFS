@@ -18,7 +18,8 @@
 
 #include "common.h"
 
-#define FTP_MSG_SIZE sizeof(ftp_msg_t)
+#define FTP_PACKET_SIZE 1024
+#define FTP_MSG_SIZE    sizeof(ftp_msg_t)
 
 /**
  * Client oriented command naming convention
@@ -32,15 +33,16 @@
  */
 #define FTP_CMD_GET   ((uint8_t)0x01)
 #define FTP_CMD_PUT   ((uint8_t)0x02)
-#define FTP_CMD_LS    ((uint8_t)0x04)
-#define FTP_CMD_ERROR ((uint8_t)0x06)
+#define FTP_CMD_LIST  ((uint8_t)0x04)
+#define FTP_CMD_DATA  ((uint8_t)0x05)
+#define FTP_CMD_TERM  ((uint8_t)0x06)
+#define FTP_CMD_ERROR ((uint8_t)0x07)
 typedef uint8_t ftp_cmd_t;
 
 typedef struct {
     ftp_cmd_t cmd;
     int32_t   nbytes;
-    char      path[PATH_MAX];
-    char      packet[CHUNK_SIZE];
+    char      packet[FTP_PACKET_SIZE];
 } ftp_msg_t;
 
 typedef enum {
@@ -58,26 +60,37 @@ typedef enum {
  * Given an arbitrary length buffer, func will break it up into packets
  * and send the chunks through the socket to the address
  */
-ftp_err_t ftp_send_data(int fd, FILE *infp);
+ftp_err_t ftp_send_data(int outfd, int infd);
 
 /**
  * @brief recieve FTP_CMD_DATA chunks from sockfd until either a timeout occurs
  * or an FTP_CMD_ERROR is recieved indicating failure or FTP_CMD_TERM is
  * recieved indicating success.
  */
-ftp_err_t ftp_recv_data(int fd, FILE *outfd);
+ftp_err_t ftp_recv_data(int infd, int outfd);
 
 /**
  * @brief Send a single command packet, used for setting up or ending
- * transactions. Use arglen -1 for strings (uses strlen to copy the relevant
- * bit)
+ * transactions.
+ *
+ * @param arg Optional argument to send to the receiver.
+ * @param len Length of *arg*, if provided. If len is set to -1, the function
+ * uses strlen to determine the length of *arg*.
  */
-ftp_err_t ftp_send_msg(int fd, ftp_cmd_t cmd, const char *arg, ssize_t arglen);
+ftp_err_t ftp_send_msg(int outfd, ftp_cmd_t cmd, const char *arg, ssize_t len);
 
 /**
- * @brief Recieve a single command packet, useful for establishing a link (ACK)
+ * @brief Recieve a single command packet
+ *
+ * @param infd File descriptor to read from
+ * @param msg Pointer to a message struct to fill
  */
-ftp_err_t ftp_recv_msg(int fd, ftp_msg_t *ret, int timeout, int send_ack,
-                       struct sockaddr *out_addr, socklen_t *out_addr_len);
+ftp_err_t ftp_recv_msg(int infd, ftp_msg_t *msg);
+
+/**
+ * @brief Return a string representation of the ftp_cmd_t
+ * 
+ */
+const char *ftp_cmd_to_str(ftp_cmd_t cmd);
 
 #endif // TRANSFER_H

@@ -11,6 +11,7 @@
  */
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,8 +27,8 @@
 #define CONFIG_PATH "~/dfc.conf"
 
 // Function prototypes
-int handle__GET(serv_t servlist[], int argc, char *argv[]);
-int handle__PUT(serv_t servlist[], int argc, char *argv[]);
+int handle__GET(serv_t servlist[], char *file_name);
+int handle__PUT(serv_t servlist[], char *file_name);
 int handle_LIST(serv_t servlist[]);
 
 // Global variables
@@ -110,10 +111,12 @@ int main(int argc, char *argv[]) {
 
     switch (cmd) {
     case GET:
-        exit(handle__GET(servlist, argc, argv));
+        // TODO: Handle multiple files depending on argc
+        exit(handle__GET(servlist, argv[2]));
         break;
     case PUT:
-        exit(handle__PUT(servlist, argc, argv));
+        // TODO: Handle multiple files depending on argc
+        exit(handle__PUT(servlist, argv[2]));
         break;
     case LIST:
         exit(handle_LIST(servlist));
@@ -129,7 +132,36 @@ int main(int argc, char *argv[]) {
  * @brief Handles the GET command
  *
  */
-int handle__GET(serv_t servlist[], int argc, char *argv[]) {
+int handle__GET(serv_t servlist[], char *file_name) {
+    // Send the GET <filename> command to each server
+    for (serv_t *serv = servlist; serv; serv = serv->next) {
+        if (!serv->connected)
+            continue;
+        send(serv->fd, &cmd, FTP_MSG_SIZE, 0);
+        ftp_send_msg(serv->fd, FTP_CMD_GET, file_name, -1);
+    }
+
+    // TODO: Ask for a list first and determine if we can reconstruct the file
+
+    // Create the file
+    int file = open(file_name, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    if (file < 0) {
+        perror("open");
+        return EXIT_FAILURE;
+    }
+
+    // TODO: Fork and recieve from each server in parallel
+    // NOTE: This current method with cause the file to be written multiple
+    // times, once for each server Receive the file from each server
+    for (serv_t *serv = servlist; serv; serv = serv->next) {
+        if (!serv->connected)
+            continue;
+        ftp_recv_data(serv->fd, file);
+    }
+
+    // Close the file
+    close(file);
+
     return EXIT_SUCCESS;
 }
 
@@ -137,7 +169,31 @@ int handle__GET(serv_t servlist[], int argc, char *argv[]) {
  * @brief Handles the PUT command
  *
  */
-int handle__PUT(serv_t servlist[], int argc, char *argv[]) {
+int handle__PUT(serv_t servlist[], char *file_name) {
+    // Send the PUT <filename> command to each server
+    for (serv_t *serv = servlist; serv; serv = serv->next) {
+        if (!serv->connected)
+            continue;
+        send(serv->fd, &cmd, FTP_MSG_SIZE, 0);
+        ftp_send_msg(serv->fd, FTP_CMD_PUT, file_name, -1);
+    }
+
+    // Open the file
+    int file = open(file_name, O_RDONLY);
+    if (file < 0) {
+        perror("open");
+        return EXIT_FAILURE;
+    }
+
+    // TODO: Create a manifest and chunk the file here
+
+    // Send the file to each server
+    for (serv_t *serv = servlist; serv; serv = serv->next) {
+        if (!serv->connected)
+            continue;
+        ftp_send_data(serv->fd, file);
+    }
+
     return EXIT_SUCCESS;
 }
 
@@ -147,20 +203,44 @@ int handle__PUT(serv_t servlist[], int argc, char *argv[]) {
  */
 int handle_LIST(serv_t servlist[]) {
     serv_t *serv;
+
     // Send the LIST command to each server
     for (serv = servlist; serv; serv = serv->next) {
         if (!serv->connected)
             continue;
         send(serv->fd, &cmd, FTP_MSG_SIZE, 0);
-        ftp_send_msg(serv->fd, FTP_CMD_LS, NULL, 0);
+        ftp_send_msg(serv->fd, FTP_CMD_LIST, NULL, 0);
     }
-    // Receive the LIST command from each server
+
+    // Receive the response from each server
     for (serv = servlist; serv; serv = serv->next) {
         if (!serv->connected)
             continue;
-        char buf[BUFSIZ];
-        recv(serv->fd, buf, BUFSIZ, 0);
-        printf("%s\n", buf);
+        printf("LIST Received from %s\n", serv->name);
+        // Receive the file_name
+        ftp_msg_t msg = {0};
+        ftp_recv_msg(serv->fd, &msg);
+        while (1) {
+            ftp_err_t err = ftp_recv_msg(serv->fd, &msg);
+            switch (msg.cmd) {
+            case FTP_CMD_PUT:
+                // Read this as a manifest file
+                printf("Received manifest file: %s\n", msg.packet);
+                ftp_recv_data(serv->fd, STDOUT_FILENO);
+                puts("\n");
+                break;
+            case FTP_CMD_LIST:
+                // Read this as a list of files (ls -l popen output)
+                printf("Received file list: \n");
+                ftp_recv_data(serv->fd, STDOUT_FILENO);
+                puts("\n");
+                break;
+            default:
+                printf("Invalid server response: %s\n", ftp_cmd_to_str(msg.cmd));
+                return EXIT_FAILURE;
+                break;
+            }
+        }
     }
 
     return EXIT_SUCCESS;
