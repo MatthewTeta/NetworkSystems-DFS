@@ -17,6 +17,8 @@
     ```
 2. Run the servers with the following usage:
     ```
+    ./dfs <directory> <port>
+    i.e:
     ./dfs ./dfs1 10001
     ./dfs ./dfs2 10002
     ./dfs ./dfs3 10003

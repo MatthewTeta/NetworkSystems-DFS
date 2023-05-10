@@ -14,3 +14,165 @@
  * will be able to handle multiple clients at once. The messaging
  * protocol is defined in protocol.h and the README.md file.
  */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+
+#include "common.h"
+
+// Structs
+typedef struct {
+	int fd;
+	char ip[INET_ADDRSTRLEN];
+} connection_t;
+
+// Global variables
+volatile int running        = 1;
+volatile int parent         = 1;
+volatile int num_children   = 0;
+int          port           = 8080;
+
+// Function prototypes
+void handle_request(connection_t *connection);
+
+void printUsage(char *argv[]) {
+	printf("Usage: %s <directory> <port>\n", argv[0]);
+}
+
+int main(int argc, char *argv[]) {
+	if (argc != 3) {
+		printUsage(argv);
+		exit(EXIT_FAILURE);
+	}
+
+	char *dir_path = argv[1];
+	port = atoi(argv[2]);
+	if (port < 1 || port > 65535) {
+		print_usage(argv);
+		exit(EXIT_FAILURE);
+	    }
+
+	// Make the directory
+	mkdir(dir_path, 0777);
+
+	// Create the socket
+	int server_fd = socket(AF_INET, SOCK_SEQPACKET, 0);
+	if (server_fd == -1) {
+		perror("socket");
+		exit(EXIT_FAILURE);
+	}
+
+	// Set socket options
+	int opt = 1;
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt,
+				   sizeof(opt))) {
+		perror("setsockopt");
+		exit(EXIT_FAILURE);
+	}
+
+	// Bind socket to port
+	struct sockaddr_in address = {
+		.sin_family	 = AF_INET,
+		.sin_addr.s_addr = INADDR_ANY,
+		.sin_port	 = htons(port),
+	};
+	if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
+		perror("bind");
+		exit(EXIT_FAILURE);
+	}
+
+	// Listen for connections
+	if (listen(server_fd, 3) == -1) {
+		perror("listen");
+		exit(EXIT_FAILURE);
+	}
+
+	// Handle incoming connections
+	while (running) {
+		// Accept connection
+		int addrlen = sizeof(address);
+		int fd	  = accept(server_fd, (struct sockaddr *)&address,
+							 (socklen_t *)&addrlen);
+		if (fd == -1) {
+			// If accept() was interrupted by a signal, try again
+			continue;
+		}
+
+		// Fork process
+		pid_t pid = fork();
+		// pid_t pid = 0;
+		if (pid == -1) {
+			perror("fork");
+			exit(EXIT_FAILURE);
+		}
+
+		// Child process
+		if (pid == 0) {
+			parent = 0;
+
+			// Close server socket
+			close(server_fd);
+
+			// Handle request
+			connection_t connection = {
+				.fd = fd,
+				.ip = {0},
+			};
+			// Populate the IP address field
+			if (inet_ntop(AF_INET, &address.sin_addr, connection.ip,
+						  INET_ADDRSTRLEN) == NULL) {
+				perror("inet_ntop");
+				exit(EXIT_FAILURE);
+			}
+			handle_request(&connection);
+
+			// Close client socket
+			close(fd);
+
+			// Exit child process
+			exit(EXIT_SUCCESS);
+		}
+
+		// Parent process
+		else {
+			num_children++;
+			// Close client socket
+			close(fd);
+		}
+	}
+
+	printf("Stopping server...\n");
+
+	// Close server socket
+	close(server_fd);
+
+	// Block the SIGCHLD signal
+	sigset_t mask;
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGCHLD);
+	sigprocmask(SIG_BLOCK, &mask, NULL);
+
+	// // Kill all children
+	// kill(0, SIGTERM);
+
+	// Wait for all children to exit
+	while (num_children > 0) {
+		wait(NULL);
+		num_children--;
+	}
+	printf("All children exited (%d)\n", num_children);
+
+	// Exit program
+	return EXIT_SUCCESS;
+}
+
+/**
+ * @brief Handle a new client connection (GET, PUT, LS)
+ */
+void handle_request(connection_t *connection) {
+	// Receive the transaction initialization header chunk
+	chunk_t chunk = {0};
+	recv(connection->fd, 
+

@@ -31,90 +31,91 @@ int handle_LIST(servlist_t *servlist);
 uint16_t client_id;
 
 void printUsage(char *argv[]) {
-    printf("Usage: %s <command> [filename] ... [filename]\n", argv[0]);
+	printf("Usage: %s <command> [filename] ... [filename]\n", argv[0]);
 }
 
 enum command {
-    INVALID,
-    GET,
-    PUT,
-    LIST,
+	INVALID,
+	GET,
+	PUT,
+	LIST,
 } cmd = INVALID;
 
 enum command parseArgs(int argc, char *argv[]) {
-    enum command cmd = INVALID;
-    if (strcmp(argv[1], "get") == 0) {
-        cmd = GET;
-    } else if (strcmp(argv[1], "put") == 0) {
-        cmd = PUT;
-    } else if (strcmp(argv[1], "list") == 0) {
-        cmd = LIST;
-    }
-    return cmd;
+	enum command cmd = INVALID;
+	if (strcmp(argv[1], "get") == 0) {
+		cmd = GET;
+	} else if (strcmp(argv[1], "put") == 0) {
+		cmd = PUT;
+	} else if (strcmp(argv[1], "list") == 0) {
+		cmd = LIST;
+	}
+	return cmd;
 }
 
 int main(int argc, char *argv[]) {
-    // Parse arguments
-    if (argc < 2) {
-        printUsage(argv);
-        exit(1);
-    }
+	// Parse arguments
+	if (argc < 2) {
+		printUsage(argv);
+		exit(1);
+	}
 
-    cmd = parseArgs(argc, argv);
-    if (cmd == INVALID) {
-        printUsage(argv);
-        exit(1);
-    }
+	cmd = parseArgs(argc, argv);
+	if (cmd == INVALID) {
+		printUsage(argv);
+		exit(1);
+	}
 
-    // Create a client identifier for this client
-    client_id = time(NULL) & 0xFFFF;
+	// Create a client identifier for this client
+	client_id = time(NULL) & 0xFFFF;
 
-    // Parse the config file to determine the server addresses and ports
-    servlist_t *servlist = parseConfig(CONFIG_PATH);
+	// Parse the config file to determine the server addresses and ports
+	servlist_t *servlist = parseConfig(CONFIG_PATH);
 
-    // Create a socket for each server
-    for (int i = 0; i < servlist->num_servers; i++) {
-        servlist->sockets[i] = socket(AF_INET, SOCK_STREAM, 0);
-        if (servlist->sockets[i] < 0) {
-            perror("socket");
-            exit(1);
-        }
-    }
+	// Create a socket for each server
+	for (int i = 0; i < servlist->num_servers; i++) {
+		servlist->sockets[i] = socket(AF_INET, SOCK_STREAM, 0);
+		if (servlist->sockets[i] < 0) {
+			perror("socket");
+			exit(1);
+		}
+	}
 
-    // TODO: Maybe move the IP stuff to the parseConfig function
-    // Connect to each server
-    for (int i = 0; i < servlist->num_servers; i++) {
-        struct sockaddr_in serv_addr;
-        serv_addr.sin_family      = AF_INET;
-        serv_addr.sin_port        = htons(servlist->ports[i]);
-        serv_addr.sin_addr.s_addr = inet_addr(servlist->addresses[i]);
+	// TODO: Maybe move the IP stuff to the parseConfig function
+	// Connect to each server
+	for (int i = 0; i < servlist->num_servers; i++) {
+		struct sockaddr_in serv_addr;
+		serv_addr.sin_family = AF_INET;
+		serv_addr.sin_port = htons(servlist->ports[i]);
+		serv_addr.sin_addr.s_addr = inet_addr(servlist->addresses[i]);
 
-        if (connect(servlist->sockets[i], (struct sockaddr *)&serv_addr,
-                    sizeof(serv_addr)) >= 0) {
-            servlist->connected[i] = 1;
-            printf("Connected to server %s\n", servlist->names[i]);
-        } else {
-            close(servlist->sockets[i]);
-            servlist->connected[i] = 0;
-            printf("Failed to connect to server %s\n", servlist->names[i]);
-        }
-    }
+		if (connect(servlist->sockets[i], (struct sockaddr *)&serv_addr,
+			    sizeof(serv_addr)) >= 0) {
+			servlist->connected[i] = 1;
+			printf("Connected to server %s\n", servlist->names[i]);
+		} else {
+			close(servlist->sockets[i]);
+			servlist->connected[i] = 0;
+			printf("Failed to connect to server %s\n",
+			       servlist->names[i]);
+		}
+	}
 
-    switch (cmd) {
-    case GET:
-        exit(handle__GET(servlist, argc, argv));
-        break;
-    case PUT:
-        exit(handle__PUT(servlist, argc, argv));
-        break;
-    case LIST:
-        exit(handle_LIST(servlist));
-        break;
-    default:
-        printf("Invalid command\n");
-        exit(EXIT_FAILURE);
-        break;
-    }
+	switch (cmd) {
+		case GET:
+			exit(handle__GET(servlist, argc, argv));
+			break;
+		case PUT:
+			exit(handle__PUT(servlist, argc, argv));
+			break;
+		case LIST:
+			exit(handle_LIST(servlist));
+			break;
+		default:
+			printf("Invalid command\n");
+			exit(EXIT_FAILURE);
+			break;
+	}
 }
 
 /**
@@ -122,8 +123,7 @@ int main(int argc, char *argv[]) {
  *
  */
 int handle__GET(servlist_t *servlist, int argc, char *argv[]) {
-
-    return EXIT_SUCCESS;
+	return EXIT_SUCCESS;
 }
 
 /**
@@ -137,21 +137,21 @@ int handle__PUT(servlist_t *servlist, int argc, char *argv[]) {}
  *
  */
 int handle_LIST(servlist_t *servlist) {
-    // Send the LIST command to each server
-    for (int i = 0; i < servlist->num_servers; i++) {
-        if (servlist->connected[i]) {
-            send(servlist->sockets[i], &cmd, sizeof(cmd), 0);
-        }
-    }
+	// Send the LIST command to each server
+	for (int i = 0; i < servlist->num_servers; i++) {
+		if (servlist->connected[i]) {
+			send(servlist->sockets[i], &cmd, sizeof(cmd), 0);
+		}
+	}
 
-    // Receive the LIST command from each server
-    for (int i = 0; i < servlist->num_servers; i++) {
-        if (servlist->connected[i]) {
-            char buf[BUFSIZ];
-            recv(servlist->sockets[i], buf, BUFSIZ, 0);
-            printf("%s\n", buf);
-        }
-    }
+	// Receive the LIST command from each server
+	for (int i = 0; i < servlist->num_servers; i++) {
+		if (servlist->connected[i]) {
+			char buf[BUFSIZ];
+			recv(servlist->sockets[i], buf, BUFSIZ, 0);
+			printf("%s\n", buf);
+		}
+	}
 
-    return EXIT_SUCCESS;
+	return EXIT_SUCCESS;
 }
