@@ -47,8 +47,9 @@ Both the servers and the clients will be stateless (except for the files residin
         - The file checksum
         - The file size & number of chunks
         - The file modification timestamp
-        - The names of each of the file chunks  
+        - The names of each of the file chunks
+          - Filename format: ```filename_hash.mtime.client_id.chunk_id```  
   - The file will be split into chunks of a fixed size as defined in the ```protocol.h``` file.  
   - The dfc will contact each of the dfs servers to determine if there is enough servers to distribute the file with the specified redundency (4 servers). If this is not the case, the client will return with an error.  
   - The chunks will be distributed to the dfs servers using the following scheme:  
-    - Each chunk will be stored on a minimum of two servers. The ```file name hash + chunk #``` % ```dfs id``` is used to determine the placements.
+    - Each chunk will be stored on a minimum of two servers. The ```filename_hash + chunk_id``` % ```NUM_SERVERS``` is used to determine the placements.
