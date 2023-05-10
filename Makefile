@@ -1,19 +1,21 @@
-$(CC) = gcc
-$(CFLAGS) = -Wall -Wextra -g -O0
-$(OBJDIR) = obj
+CC = gcc
+CFLAGS = -Wall -Wextra -g -O0
+OBJDIR = obj
+SRCDIR = src
 
 all: clean dfc dfs
 
-dfc: dfc.c
+dfc: $(SRCDIR)/dfc.c $(SRCDIR)/transfer.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-dfs: dfs.c
+dfs: $(SRCDIR)/dfs.c $(SRCDIR)/transfer.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $(OBJDIR)$@
+	$(CC) $(CFLAGS) -c $< -o $(OBJDIR) $@
 
 .PHONY: clean
 
 clean:
 	rm -f dfc dfs $(OBJDIR)/*.o
+
