@@ -15,3 +15,5 @@ tests/parse_conf
 tests/dfs?/
 .vscode
 tests/manifests
+tmp/
+vgcore*

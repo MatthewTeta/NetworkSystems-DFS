@@ -116,7 +116,7 @@ int main(int argc, char *argv[]) {
     // Generate the manifest path
     char manifest_path[PATH_MAX];
     bzero(manifest_path, PATH_MAX);
-    snprintf(manifest_path, PATH_MAX, "/tmp/%s", base_name);
+    snprintf(manifest_path, PATH_MAX, "manifests/%s", base_name);
 
     // mkdir("manifests", 0777);
 
@@ -127,6 +127,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
     fprintf(f_manifest, "filename: %s\n", filename);
+    fprintf(f_manifest, "basename: %s\n", base_name);
     fprintf(f_manifest, "hash: %s\n", hash_str);
     fprintf(f_manifest, "stime: %lu\n", stime);
     fprintf(f_manifest, "client_id: %u\n", client_id);
@@ -136,21 +137,21 @@ int main(int argc, char *argv[]) {
     fprintf(f_manifest, "num_chunks: %lu\n", num_chunks);
     fprintf(f_manifest, "residual_len: %lu\n", residual_len);
     fprintf(f_manifest, "checksum: %s\n", checksum);
-	// TODO: Send the manifest to the server
+    // TODO: Send the manifest to the server
     fclose(f_manifest);
-	// Remove the manifest file
-	remove(manifest_path);
+    // Remove the manifest file
+    // remove(manifest_path);
 
     // Distribute chunks among available servers with REDUNDENCY
-    puts("Opening the file...");
+    printf("Opening the file... (%s)", manifest_path);
     int fd = open(filepath, O_RDONLY);
     puts("Chunk Map:\t(chunk)\t->\t(serv_id)");
     for (size_t chunk_id = 0; chunk_id < num_chunks; chunk_id++) {
         for (char r = 0; r < REDUNDENCY; r++) {
             // Read the chunk
-            char    chunk[CHUNK_SIZE] = {0};
-			// TODO: Loop until all data is written
-            ssize_t bytes_read        = read(fd, chunk, CHUNK_SIZE);
+            char chunk[CHUNK_SIZE] = {0};
+            // TODO: Loop until all data is written
+            ssize_t bytes_read = read(fd, chunk, CHUNK_SIZE);
             if (bytes_read == -1) {
                 perror("read");
                 exit(1);

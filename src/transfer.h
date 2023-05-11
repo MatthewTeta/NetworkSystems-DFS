@@ -42,7 +42,7 @@ typedef uint8_t ftp_cmd_t;
 typedef struct {
     ftp_cmd_t cmd;
     int32_t   nbytes;
-    char      packet[FTP_PACKET_SIZE];
+    uint8_t   packet[FTP_PACKET_SIZE + 1]; // +1 for null terminator
 } ftp_msg_t;
 
 typedef enum {
@@ -89,8 +89,20 @@ ftp_err_t ftp_recv_msg(int infd, ftp_msg_t *msg);
 
 /**
  * @brief Return a string representation of the ftp_cmd_t
- * 
+ *
  */
 const char *ftp_cmd_to_str(ftp_cmd_t cmd);
+
+/**
+ * @brief Return a string representation of the ftp_err_t
+ *
+ */
+const char *ftp_err_to_str(ftp_err_t err);
+
+/**
+ * @brief Print the contents of a ftp_msg_t to the FILE *stream
+ *
+ */
+void ftp_msg_print(FILE *stream, ftp_msg_t *msg);
 
 #endif // TRANSFER_H

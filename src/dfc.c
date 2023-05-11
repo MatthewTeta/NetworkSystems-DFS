@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h> // mkdir
 #include <time.h>
 #include <unistd.h>
 
@@ -33,6 +34,7 @@ int handle_LIST(serv_t servlist[]);
 
 // Global variables
 uint16_t client_id;
+char     tmp_path[PATH_MAX / 2] = {0};
 
 void printUsage(char *argv[]) {
     printf("Usage: %s <command> [filename] ... [filename]\n", argv[0]);
@@ -70,8 +72,14 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    // Create a temporary directory for receiving files into
+    mkdir("tmp", 0777);
+    snprintf(tmp_path, PATH_MAX / 2, "tmp/client%d", getpid());
+    mkdir(tmp_path, 0777);
+
     // Create a client identifier for this client
-    client_id = time(NULL) & 0xFFFF;
+    srand(time(NULL));
+    client_id = rand() & 0xFFFF;
 
     // Parse the config file to determine the server addresses and ports
     char config_path[PATH_MAX] = {0};
@@ -79,8 +87,10 @@ int main(int argc, char *argv[]) {
     printf("%s\n", config_path);
     serv_t servlist[MAX_SERVERS];
     int    num_servers = parseConfig(config_path, servlist);
-    if (num_servers)
-        servlist_print(servlist);
+    if (num_servers < 0) {
+        printf("Failed to parse config file\n");
+        exit(1);
+    }
 
     // Create a socket for each server
     for (serv_t *serv = servlist; serv; serv = serv->next) {
@@ -109,23 +119,34 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Print the server list
+    servlist_print(servlist);
+
+    int rv = EXIT_SUCCESS;
     switch (cmd) {
     case GET:
         // TODO: Handle multiple files depending on argc
-        exit(handle__GET(servlist, argv[2]));
+        rv = handle__GET(servlist, argv[2]);
         break;
     case PUT:
         // TODO: Handle multiple files depending on argc
-        exit(handle__PUT(servlist, argv[2]));
+        rv = handle__PUT(servlist, argv[2]);
         break;
     case LIST:
-        exit(handle_LIST(servlist));
+        rv = handle_LIST(servlist);
         break;
     default:
         printf("Invalid command\n");
-        exit(EXIT_FAILURE);
+        rv = EXIT_FAILURE;
         break;
     }
+
+    // CLeanup
+    for (serv_t *serv = servlist; serv; serv = serv->next) {
+        close(serv->fd);
+    }
+    remove(tmp_path);
+    return rv;
 }
 
 /**
@@ -137,7 +158,6 @@ int handle__GET(serv_t servlist[], char *file_name) {
     for (serv_t *serv = servlist; serv; serv = serv->next) {
         if (!serv->connected)
             continue;
-        send(serv->fd, &cmd, FTP_MSG_SIZE, 0);
         ftp_send_msg(serv->fd, FTP_CMD_GET, file_name, -1);
     }
 
@@ -174,7 +194,6 @@ int handle__PUT(serv_t servlist[], char *file_name) {
     for (serv_t *serv = servlist; serv; serv = serv->next) {
         if (!serv->connected)
             continue;
-        send(serv->fd, &cmd, FTP_MSG_SIZE, 0);
         ftp_send_msg(serv->fd, FTP_CMD_PUT, file_name, -1);
     }
 
@@ -208,7 +227,6 @@ int handle_LIST(serv_t servlist[]) {
     for (serv = servlist; serv; serv = serv->next) {
         if (!serv->connected)
             continue;
-        send(serv->fd, &cmd, FTP_MSG_SIZE, 0);
         ftp_send_msg(serv->fd, FTP_CMD_LIST, NULL, 0);
     }
 
@@ -216,31 +234,55 @@ int handle_LIST(serv_t servlist[]) {
     for (serv = servlist; serv; serv = serv->next) {
         if (!serv->connected)
             continue;
-        printf("LIST Received from %s\n", serv->name);
-        // Receive the file_name
-        ftp_msg_t msg = {0};
-        ftp_recv_msg(serv->fd, &msg);
-        while (1) {
-            ftp_err_t err = ftp_recv_msg(serv->fd, &msg);
-            switch (msg.cmd) {
-            case FTP_CMD_PUT:
-                // Read this as a manifest file
-                printf("Received manifest file: %s\n", msg.packet);
-                ftp_recv_data(serv->fd, STDOUT_FILENO);
-                puts("\n");
-                break;
-            case FTP_CMD_LIST:
-                // Read this as a list of files (ls -l popen output)
-                printf("Received file list: \n");
-                ftp_recv_data(serv->fd, STDOUT_FILENO);
-                puts("\n");
-                break;
-            default:
-                printf("Invalid server response: %s\n", ftp_cmd_to_str(msg.cmd));
-                return EXIT_FAILURE;
-                break;
-            }
+        printf("Receiving LIST from %s\n", serv->name);
+        // Receive each manifest file
+        // ftp_msg_t msg = {0};
+        // ftp_recv_msg(serv->fd, &msg);
+        // while (1) {
+        //     ftp_err_t err = ftp_recv_msg(serv->fd, &msg);
+        //     switch (msg.cmd) {
+        //     case FTP_CMD_PUT:
+        //         // Read this as a manifest file
+        //         printf("Received manifest file: %s\n", msg.packet);
+        //         ftp_recv_data(serv->fd, STDOUT_FILENO);
+        //         puts("\n");
+        //         break;
+        //     case FTP_CMD_LIST:
+        //         // Read this as a list of files (ls -l popen output)
+        //         printf("Received file list: \n");
+        //         ftp_recv_data(serv->fd, STDOUT_FILENO);
+        //         puts("\n");
+        //         break;
+        //     default:
+        //         printf("Invalid server response: %s\n",
+        //                ftp_cmd_to_str(msg.cmd));
+        //         return EXIT_FAILURE;
+        //         break;
+        //     }
+        // }
+
+        // Create a temporary file to store the ls -l output
+        char tmp_file[PATH_MAX] = {0};
+        snprintf(tmp_file, PATH_MAX, "%s/%04X.tmp", tmp_path, rand() & 0xFFFF);
+        int file = open(tmp_file, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+        if (file < 0) {
+            perror("open");
+            return EXIT_FAILURE;
         }
+        ftp_recv_data(serv->fd, file);
+        close(file);
+
+        // Read the file and print it
+        FILE *fp = fopen(tmp_file, "r");
+        if (!fp) {
+            perror("fopen");
+            return EXIT_FAILURE;
+        }
+        char line[PATH_MAX] = {0};
+        while (fgets(line, PATH_MAX, fp)) {
+            printf("%s", line);
+        }
+        fclose(fp);
     }
 
     return EXIT_SUCCESS;

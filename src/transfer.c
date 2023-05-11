@@ -18,6 +18,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
+
 /* For Reference:
 
 #define FTP_CMD_GET    ((uint8_t)0x01)
@@ -66,6 +68,10 @@ ftp_err_t ftp_send_data(int outfd, int infd) {
         err = ftp_send_msg(outfd, FTP_CMD_DATA, buf, nbytes);
         if (err != FTP_ERR_NONE) {
             return err;
+        }
+        if (nbytes == 0) {
+            // Finished reading the file
+            break;
         }
     }
     // Send the termination message
@@ -119,15 +125,27 @@ ftp_err_t ftp_send_msg(int outfd, ftp_cmd_t cmd, const char *arg, ssize_t len) {
     if (len == -1) {
         len = strlen(arg);
     }
-    strncpy(msg.packet, arg, len);
+    memcpy(msg.packet, arg, len);
     msg.nbytes = len;
 
-    size_t bytes_sent;
+#ifdef DEBUG_TRANSFER
+    puts("DEBUG: Sending message");
+    ftp_msg_print(stdout, &msg);
+#endif
+
+    // Send the message
+    size_t bytes_sent = 0;
     while (bytes_sent < FTP_MSG_SIZE) {
         ssize_t ret =
             send(outfd, &msg + bytes_sent, FTP_MSG_SIZE - bytes_sent, 0);
         if (ret < 0) {
             return FTP_ERR_SOCKET;
+        }
+#ifdef DEBUG_TRANSFER
+        printf("DEBUG: Sent %ld bytes\n", ret);
+#endif
+        if (ret == 0) {
+            return FTP_ERR_SERVER;
         }
         bytes_sent += ret;
     }
@@ -142,7 +160,7 @@ ftp_err_t ftp_recv_msg(int infd, ftp_msg_t *msg) {
         return FTP_ERR_ARGS;
     }
     bzero(msg, FTP_MSG_SIZE);
-    size_t bytes_recv;
+    size_t bytes_recv = 0;
     while (bytes_recv < FTP_MSG_SIZE) {
         struct pollfd fds = {0};
         fds.fd            = infd;
@@ -156,10 +174,19 @@ ftp_err_t ftp_recv_msg(int infd, ftp_msg_t *msg) {
         ssize_t ret =
             recv(infd, msg + bytes_recv, FTP_MSG_SIZE - bytes_recv, 0);
         if (ret < 0) {
+            perror("Error recieving message");
             return FTP_ERR_SOCKET;
         }
+        if (ret == 0) {
+            return FTP_ERR_SERVER;
+        }
+#ifdef DEBUG_TRANSFER
+        printf("DEBUG: Recieved %ld bytes\n", ret);
+#endif
         bytes_recv += ret;
     }
+    printf("DEBUG: Recieved message (%lu):\n", bytes_recv);
+    ftp_msg_print(stdout, msg);
     return FTP_ERR_NONE;
 }
 
@@ -184,4 +211,58 @@ const char *ftp_cmd_to_str(ftp_cmd_t cmd) {
     default:
         return "INVALID";
     }
+}
+
+/**
+ * @brief Return a string representation of the ftp_err_t
+ *
+ */
+const char *ftp_err_to_str(ftp_err_t err) {
+    switch (err) {
+    case FTP_ERR_NONE:
+        return "NONE";
+    case FTP_ERR_ARGS:
+        return "ARGS";
+    case FTP_ERR_SOCKET:
+        return "SOCKET";
+    case FTP_ERR_POLL:
+        return "POLL";
+    case FTP_ERR_TIMEOUT:
+        return "TIMEOUT";
+    case FTP_ERR_INVALID:
+        return "INVALID";
+    case FTP_ERR_SERVER:
+        return "SERVER";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+/**
+ * @brief Print the contents of a ftp_msg_t to the FILE *stream
+ *
+ */
+void ftp_msg_print(FILE *stream, ftp_msg_t *msg) {
+    fprintf(stream, "ftp_msg_t {\n");
+    fprintf(stream, "\tcmd: %s\n", ftp_cmd_to_str(msg->cmd));
+    fprintf(stream, "\tnbytes: %d\n", msg->nbytes);
+    if (msg->packet[FTP_PACKET_SIZE] != '\0') {
+        fprintf(stderr,
+                "WARNING: packet is not null terminated (corruption)\n");
+    }
+    fprintf(stream, "\tpacket: %s\n", msg->packet);
+#ifdef DEBUG_HEX
+    // Print hex grid of msg data
+    fprintf(stream, "\tdata: ");
+    for (size_t i = 0; i < FTP_MSG_SIZE; i++) {
+        fprintf(stream, "%02X ", ((uint8_t *)msg)[i]);
+        if (i % 8 == 7) {
+            fprintf(stream, "\t");
+        }
+        if (i % 16 == 15) {
+            fprintf(stream, "\n\t      ");
+        }
+    }
+#endif
+    fprintf(stream, "}\n");
 }
