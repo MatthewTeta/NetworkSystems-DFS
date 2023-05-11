@@ -221,6 +221,9 @@ ftp_err_t ftp_recv_msg(int infd, ftp_msg_t *msg) {
 #endif
         bytes_recv += ret;
     }
+    if (msg->cmd == FTP_CMD_ERROR) {
+        return FTP_ERR_SERVER;
+    }
     // printf("DEBUG: Recieved message (%lu):\n", bytes_recv);
     // ftp_msg_print(stdout, msg);
     return FTP_ERR_NONE;

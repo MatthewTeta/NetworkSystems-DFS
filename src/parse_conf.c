@@ -9,6 +9,8 @@
 #include <string.h>
 #include <sys/socket.h>
 
+#include "common.h"
+
 #define MAX_SERVERS 16
 #define CONFIG_PATH "~/dfc.conf"
 
@@ -101,16 +103,33 @@ int parseConfig(char *path, serv_t servlist[]) {
     return num_servers;
 }
 
+/**
+ * @brief Print a line of characters
+ */
+void print_line(size_t len, char c) {
+    for (; len; len--)
+        printf("%c", c);
+    puts("");
+}
+
 void servlist_print(serv_t servlist[]) {
+    printf("\nServer List:\n");
+    print_line(80, '-');
+    printf("[idx]\t             ip : port\t  fd\t       status\tname\n");
+    print_line(80, '-');
     while (servlist) {
-        printf("[%s]\t%s:%s (%d)", servlist->name, servlist->ip, servlist->port,
-               servlist->fd);
+        printf("[%3d]\t%15s : %5s\t%4d\t", servlist->id, servlist->ip,
+               servlist->port, servlist->fd);
         if (servlist->connected) {
-            printf("(connected)");
+            printf("  (connected)");
+        } else {
+            printf("(unreachable)");
         }
-        puts("");
+        printf("\t%s\n", servlist->name);
         servlist = servlist->next;
     }
+    print_line(80, '-');
+    puts("");
 }
 
 // int main() {

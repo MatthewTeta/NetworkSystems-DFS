@@ -19,7 +19,7 @@
 #include "common.h"
 
 // #define FTP_PACKET_SIZE 1024
-#define FTP_MSG_SIZE    sizeof(ftp_msg_t)
+#define FTP_MSG_SIZE sizeof(ftp_msg_t)
 
 /**
  * Client oriented command naming convention
@@ -41,7 +41,7 @@ typedef uint8_t ftp_cmd_t;
 
 typedef struct {
     ftp_cmd_t cmd;
-    int32_t   nbytes;
+    uint32_t  nbytes;
     uint8_t   packet[FTP_PACKET_SIZE + 1]; // +1 for null terminator
 } ftp_msg_t;
 

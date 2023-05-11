@@ -49,6 +49,21 @@ void handle_LIST(int fd);
 // char manif_path[PATH_MAX / 2] = {0};
 char chunk_path[PATH_MAX / 2] = {0};
 
+void signal_handler(int sig) {
+    if (sig == SIGINT) {
+        if (parent) {
+            printf("Shutting down server...\n");
+            // Do not accept any more connections
+            running = 0;
+        }
+    } else if (sig == SIGCHLD) {
+        // Wait for all children to exit
+        while (waitpid(-1, NULL, WNOHANG) > 0) {
+            num_children--;
+        }
+    }
+}
+
 void printUsage(char *argv[]) {
     printf("Usage: %s <directory> <port>\n", argv[0]);
 }
@@ -64,6 +79,22 @@ int main(int argc, char *argv[]) {
     if (port < 1 || port > 65535) {
         printUsage(argv);
         exit(EXIT_FAILURE);
+    }
+
+    // Register signal handler
+    struct sigaction sa;
+    sa.sa_handler = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART; // Restart functions if interrupted by handler
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("sigaction(SIGINT) failed");
+        fprintf(stderr, "Error setting up signal handler.\n");
+        exit(-1);
+    }
+    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+        perror("sigaction(SIGCHLD) failed");
+        fprintf(stderr, "Error setting up signal handler.\n");
+        exit(-1);
     }
 
     printf("Starting server on port %d\n", port);
@@ -197,15 +228,16 @@ void handle_request(int fd, char *ip) {
         case FTP_ERR_NONE:
             break;
         case FTP_ERR_CLOSE:
-            printf("Client %s disconnected\n", ip);
+            fprintf(stderr, "[INFO]\tClient disconnected (%s)\n", ip);
             close(fd);
             return;
         case FTP_ERR_TIMEOUT:
-            printf("Client %s timed out\n", ip);
+            fprintf(stderr, "[INFO]\tClient timed out (%s)\n", ip);
             close(fd);
             return;
         default:
-            printf(
+            fprintf(
+                stderr,
                 "Error receiving transaction initialization header chunk: %s\n",
                 ftp_err_to_str(err));
             return;
@@ -237,7 +269,7 @@ void handle_request(int fd, char *ip) {
 
 // Handle a GET request
 void handle__GET(int fd, ftp_msg_t *msg) {
-    char *filename = (char *)msg->packet;
+    char *filename           = (char *)msg->packet;
     char  filepath[PATH_MAX] = {0};
     snprintf(filepath, PATH_MAX, "%s/%s", chunk_path, filename);
     printf("Filepath: %s\n", filepath);
@@ -246,11 +278,11 @@ void handle__GET(int fd, ftp_msg_t *msg) {
     mkdir(chunk_path, 0777);
 
     // Open the file
-    int file = open(filename, O_RDONLY);
+    int file = open(filepath, O_RDONLY);
     if (file == -1) {
         // If the file doesn't exist, send an error message
         ftp_send_msg(fd, FTP_CMD_ERROR, "File not found", -1);
-        exit(EXIT_FAILURE);
+        return;
     }
 
     // Send the file
@@ -275,7 +307,7 @@ void handle__PUT(int fd, ftp_msg_t *msg) {
     if (file == -1) {
         // If the file couldn't be created, send an error message
         ftp_send_msg(fd, FTP_CMD_ERROR, "File couldn't be created", -1);
-        exit(EXIT_FAILURE);
+        return;
     }
 
     // Receive into the file
@@ -288,11 +320,11 @@ void handle__PUT(int fd, ftp_msg_t *msg) {
 void handle_LIST(int fd) {
     // Run ls -l
     char cmd[PATH_MAX + 7] = {0};
-    snprintf(cmd, PATH_MAX + 7, "ls -l %s", chunk_path);
+    snprintf(cmd, PATH_MAX + 7, "ls -lr %s", chunk_path);
     FILE *fp = popen(cmd, "r");
     if (fp == NULL) {
         perror("popen");
-        exit(EXIT_FAILURE);
+        return;
     }
     // Send an empty LIST delimiter (FTP_CMD_LIST)
     // ftp_send_msg(fd, FTP_CMD_LIST, NULL, 0);
