@@ -2,14 +2,22 @@ CC = gcc
 CFLAGS = -Wall -Wextra -g -O0
 OBJDIR = obj
 SRCDIR = src
+INCLUDE = ./libraries/include
+BIN = ./libraries/bin
 
-all: clean dfc dfs
+all: clean libraries dfc dfs
 
-dfc: $(SRCDIR)/dfc.c $(SRCDIR)/transfer.c
-	$(CC) $(CFLAGS) -o $@ $^
+libraries:
+	make -C libraries
+
+dfc: $(SRCDIR)/dfc.c $(SRCDIR)/transfer.c $(BIN)/md5.o
+	$(CC) $(CFLAGS) -I$(INCLUDE) -B$(BIN) -o $@ $^
 
 dfs: $(SRCDIR)/dfs.c $(SRCDIR)/transfer.c
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -I$(INCLUDE) -B$(BIN) -o $@ $^
+
+$(BIN)/md5.o:
+	make -C libraries
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $(OBJDIR) $@

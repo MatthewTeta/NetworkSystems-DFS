@@ -22,14 +22,15 @@
 #include <unistd.h>
 
 #include "common.h"
+#include "md5.h"
 #include "parse_conf.c"
 #include "transfer.h"
 
 #define CONFIG_PATH "~/dfc.conf"
 
 // Function prototypes
-int handle__GET(serv_t servlist[], char *file_name);
-int handle__PUT(serv_t servlist[], char *file_name);
+int handle__GET(serv_t servlist[], char *filename);
+int handle__PUT(serv_t servlist[], char *filename);
 int handle_LIST(serv_t servlist[]);
 
 // Global variables
@@ -153,18 +154,18 @@ int main(int argc, char *argv[]) {
  * @brief Handles the GET command
  *
  */
-int handle__GET(serv_t servlist[], char *file_name) {
+int handle__GET(serv_t servlist[], char *filename) {
     // Send the GET <filename> command to each server
     for (serv_t *serv = servlist; serv; serv = serv->next) {
         if (!serv->connected)
             continue;
-        ftp_send_msg(serv->fd, FTP_CMD_GET, file_name, -1);
+        ftp_send_msg(serv->fd, FTP_CMD_GET, filename, -1);
     }
 
     // TODO: Ask for a list first and determine if we can reconstruct the file
 
     // Create the file
-    int file = open(file_name, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    int file = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (file < 0) {
         perror("open");
         return EXIT_FAILURE;
@@ -189,29 +190,163 @@ int handle__GET(serv_t servlist[], char *file_name) {
  * @brief Handles the PUT command
  *
  */
-int handle__PUT(serv_t servlist[], char *file_name) {
-    // Send the PUT <filename> command to each server
-    for (serv_t *serv = servlist; serv; serv = serv->next) {
-        if (!serv->connected)
-            continue;
-        ftp_send_msg(serv->fd, FTP_CMD_PUT, file_name, -1);
-    }
+int handle__PUT(serv_t servlist[], char *argpath) {
+    // // Send the PUT <argpath> command to each server
+    // for (serv_t *serv = servlist; serv; serv = serv->next) {
+    //     if (!serv->connected)
+    //         continue;
+    //     ftp_send_msg(serv->fd, FTP_CMD_PUT, argpath, -1);
+    // }
 
-    // Open the file
-    int file = open(file_name, O_RDONLY);
-    if (file < 0) {
-        perror("open");
+    // // Open the file
+    // int file = open(argpath, O_RDONLY);
+    // if (file < 0) {
+    //     perror("open");
+    //     return EXIT_FAILURE;
+    // }
+
+    // // Send the file to each server
+    // for (serv_t *serv = servlist; serv; serv = serv->next) {
+    //     if (!serv->connected)
+    //         continue;
+    //     ftp_send_data(serv->fd, file);
+    // }
+
+    // // Close the file
+    // close(file);
+    // return;
+
+    // -- Determine the file info for distribution --
+    // get the absolute path of the file
+    char *filepath = realpath(argpath, NULL);
+    if (filepath == NULL) {
+        perror("realpath");
+        exit(1);
+    }
+    printf("filepath: %s\n", filepath);
+
+    // Get file name
+    char *filename = strrchr(filepath, '/');
+    if (filename == NULL) {
+        perror("strrchr");
+        exit(1);
+    }
+    filename++;
+    printf("filename: %s\n", filename);
+
+    // Hash the file name
+    uint8_t hash[16];
+    char    hash_str[33];
+    md5String(filename, hash);
+    for (int i = 0; i < 16; i++) {
+        sprintf(hash_str + (i * 2), "%02x", hash[i]);
+    }
+    printf("hash: %s\n", hash_str);
+
+    // Stat the file
+    struct stat st;
+    if (stat(filepath, &st) == -1) {
+        perror("stat");
+        exit(1);
+    }
+    off_t size = st.st_size;
+    // time_t mtime = st.st_mtime;
+    time_t stime = time(NULL);
+    printf("size: %ld\n", size);
+    printf("stime: %lu\n", stime);
+
+    // Determine number of chunks
+    size_t full_chunks  = size / FTP_PACKET_SIZE;
+    size_t residual_len = size % FTP_PACKET_SIZE;
+    size_t num_chunks   = full_chunks + (residual_len ? 1 : 0);
+    printf("chunks (%lu): (%lu * FTP_PACKET_SIZE) + %lu = %lu\n", num_chunks,
+           full_chunks, residual_len,
+           full_chunks * FTP_PACKET_SIZE + residual_len);
+
+    // Ensure there are at least NUM_SERVERS servers available for writing
+    // This also allows us to index into the servlist array
+    serv_t *servlist_i[MAX_SERVERS];
+    int     num_servers = 0;
+    while (servlist) {
+        if (servlist->connected) {
+            printf("[%d]: %s\n", num_servers, servlist->name);
+            servlist_i[num_servers++] = servlist;
+        }
+        servlist = servlist->next;
+    }
+    if (num_servers < NUM_SERVERS) {
+        printf("Not enough servers available for writing (%d/%d)\n",
+               num_servers, NUM_SERVERS);
         return EXIT_FAILURE;
     }
 
-    // TODO: Create a manifest and chunk the file here
+    // Produce URI
+    char base_name[PATH_MAX / 2];
+    bzero(base_name, PATH_MAX / 2);
+    snprintf(base_name, PATH_MAX / 2, "%s.%lu.%u.%lu", filename, stime,
+             client_id, num_chunks);
 
-    // Send the file to each server
-    for (serv_t *serv = servlist; serv; serv = serv->next) {
-        if (!serv->connected)
-            continue;
-        ftp_send_data(serv->fd, file);
+    // Distribute chunks among available servers with REDUNDENCY
+    printf("Distributing file %s", filepath);
+    int fd = open(filepath, O_RDONLY);
+    puts("Chunk Map:\t(chunk)\t->\t(serv_id)");
+    for (size_t chunk_id = 0; chunk_id < num_chunks; chunk_id++) {
+        for (char r = 0; r < REDUNDENCY; r++) {
+            // // Read the chunk
+            // char chunk[FTP_PACKET_SIZE] = {0};
+            // // TODO: Loop until all data is written
+            // ssize_t bytes_read = read(fd, chunk, FTP_PACKET_SIZE);
+            // if (bytes_read == -1) {
+            //     perror("read");
+            //     return EXIT_FAILURE;
+            // }
+            // if (bytes_read == 0) {
+            //     break;
+            // }
+
+            size_t serv_id = (hash[0] + chunk_id + r) % num_servers;
+            char   chunk_name[PATH_MAX] = {0};
+            snprintf(chunk_name, PATH_MAX, "%s.%04lX", base_name, chunk_id);
+            // printf("\t\t[%lu]\t->\t{%lu}\t\t%s\t\t(%ld)\n", chunk_id,
+            // serv_id,
+            //        chunk_name, bytes_read);
+            printf("\t\t[%lu]\t->\t{%lu}\t\t%s\n", chunk_id, serv_id,
+                   chunk_name);
+
+            // Send the chunk to the server
+            serv_t *serv = servlist_i[serv_id];
+            if (!serv->connected) {
+                printf("Server %lu is not connected\n", serv_id);
+                return EXIT_FAILURE;
+            }
+
+            // Send the PUT <argpath> command to each server
+            ftp_send_msg(serv->fd, FTP_CMD_PUT, chunk_name, -1);
+
+            // Send the chunk to the server
+            lseek(fd, chunk_id * FTP_PACKET_SIZE, SEEK_SET);
+            uint8_t buf[FTP_PACKET_SIZE];
+            read(fd, chunk_name, FTP_PACKET_SIZE);
+            // printf("read (%lu): %s\n", chunk_id, buf);
+            ftp_send_msg(serv->fd, FTP_CMD_DATA, (char *)buf, FTP_PACKET_SIZE);
+            ftp_send_msg(serv->fd, FTP_CMD_TERM, NULL, 0);
+            // ftp_send_data_chunk(serv->fd, fd, FTP_PACKET_SIZE);
+        }
     }
+
+    // // Send chunks in parallel
+    // for (serv_t *serv = servlist; serv; serv = serv->next) {
+    //     if (!serv->connected)
+    //         continue;
+    //     pid_t pid = fork();
+    //     if (pid == 0) {
+    //         // Child
+    //     } else {
+    //         // Parent
+
+    //     }
+    // }
+    close(fd);
 
     return EXIT_SUCCESS;
 }
@@ -278,9 +413,17 @@ int handle_LIST(serv_t servlist[]) {
             perror("fopen");
             return EXIT_FAILURE;
         }
-        char line[PATH_MAX] = {0};
+        char   line[PATH_MAX] = {0};
+        size_t line_no        = 0;
         while (fgets(line, PATH_MAX, fp)) {
-            printf("%s", line);
+            line_no++;
+            // Parse the filename out of the line
+            if (line_no == 1) {
+                // Skip the first line
+                continue;
+            }
+            char *filename = strrchr(line, ' ') + 1;
+            printf("%s\n", filename);
         }
         fclose(fp);
     }

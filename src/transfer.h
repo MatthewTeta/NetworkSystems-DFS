@@ -18,7 +18,7 @@
 
 #include "common.h"
 
-#define FTP_PACKET_SIZE 1024
+// #define FTP_PACKET_SIZE 1024
 #define FTP_MSG_SIZE    sizeof(ftp_msg_t)
 
 /**
@@ -53,14 +53,33 @@ typedef enum {
     FTP_ERR_TIMEOUT,
     FTP_ERR_INVALID,
     FTP_ERR_SERVER,
+    FTP_ERR_CLOSE,
 } ftp_err_t;
 
 /**
  * @brief Send arbitrary buffer over the socket
  * Given an arbitrary length buffer, func will break it up into packets
  * and send the chunks through the socket to the address
+ *
+ * @param outfd File descriptor to write to
+ * @param infd File descriptor to read from
+ * @return ftp_err_t
+ *
+ * @note This function will block until the entire buffer is sent.
  */
 ftp_err_t ftp_send_data(int outfd, int infd);
+
+/**
+ * @brief Send a single chunk of data over the socket
+ *
+ * @param outfd File descriptor to write to
+ * @param infd File descriptor to read from
+ * @param nbytes Number of bytes to send
+ * @return ftp_err_t
+ *
+ * @note This function will block until the entire buffer is sent.
+ */
+ftp_err_t ftp_send_data_chunk(int outfd, int infd, int32_t nbytes);
 
 /**
  * @brief recieve FTP_CMD_DATA chunks from sockfd until either a timeout occurs

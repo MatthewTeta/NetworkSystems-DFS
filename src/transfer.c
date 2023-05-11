@@ -58,7 +58,6 @@ ftp_err_t ftp_send_data(int outfd, int infd) {
     ftp_err_t err                  = FTP_ERR_NONE;
     while (err == FTP_ERR_NONE) {
         // Read from the input file
-        // TODO: Loop until all data is written
         ssize_t nbytes = read(infd, buf, FTP_PACKET_SIZE);
         if (nbytes < 0) {
             perror("Error reading from file");
@@ -74,14 +73,49 @@ ftp_err_t ftp_send_data(int outfd, int infd) {
             break;
         }
     }
+    if (err != FTP_ERR_NONE) {
+        return err;
+    }
     // Send the termination message
     return ftp_send_msg(outfd, FTP_CMD_TERM, NULL, 0);
 }
 
 /**
- * @brief recieve FTP_CMD_DATA chunks from sockfd until either a timeout occurs
- * or an FTP_CMD_ERROR is recieved indicating failure or FTP_CMD_TERM is
- * recieved indicating success.
+ * @brief Send a single chunk of data over the socket
+ */
+// ftp_err_t ftp_send_data_chunk(int outfd, int infd, int32_t len) {
+//     char      buf[FTP_PACKET_SIZE] = {0};
+//     ftp_err_t err                  = FTP_ERR_NONE;
+//     size_t    total                = 0;
+//     while (err == FTP_ERR_NONE) {
+//         // Read from the input file (only the amount specified by nbytes and
+//         chunk according to transfer protocol) ssize_t nbytes = read(infd,
+//         buf, MIN(FTP_PACKET_SIZE, len - total)); if (nbytes < 0) {
+//             perror("Error reading from file");
+//             return FTP_ERR_ARGS;
+//         }
+//         total += nbytes;
+//         // Send the data to the server
+//         err = ftp_send_msg(outfd, FTP_CMD_DATA, buf, nbytes);
+//         if (err != FTP_ERR_NONE) {
+//             return err;
+//         }
+//         if (nbytes == 0) {
+//             // Finished reading the file
+//             break;
+//         }
+//     }
+//     if (err != FTP_ERR_NONE) {
+//         return err;
+//     }
+//     // Send the termination message
+//     return ftp_send_msg(outfd, FTP_CMD_TERM, NULL, 0);
+// }
+
+/**
+ * @brief recieve FTP_CMD_DATA chunks from sockfd until either a timeout
+ * occurs or an FTP_CMD_ERROR is recieved indicating failure or FTP_CMD_TERM
+ * is recieved indicating success.
  */
 ftp_err_t ftp_recv_data(int infd, int outfd) {
     ftp_msg_t msg = {0};
@@ -145,7 +179,7 @@ ftp_err_t ftp_send_msg(int outfd, ftp_cmd_t cmd, const char *arg, ssize_t len) {
         printf("DEBUG: Sent %ld bytes\n", ret);
 #endif
         if (ret == 0) {
-            return FTP_ERR_SERVER;
+            return FTP_ERR_CLOSE;
         }
         bytes_sent += ret;
     }
@@ -153,7 +187,8 @@ ftp_err_t ftp_send_msg(int outfd, ftp_cmd_t cmd, const char *arg, ssize_t len) {
 }
 
 /**
- * @brief Recieve a single command packet, useful for establishing a link (ACK)
+ * @brief Recieve a single command packet, useful for establishing a link
+ * (ACK)
  */
 ftp_err_t ftp_recv_msg(int infd, ftp_msg_t *msg) {
     if (infd <= 0 || msg == NULL) {
@@ -171,22 +206,23 @@ ftp_err_t ftp_recv_msg(int infd, ftp_msg_t *msg) {
         } else if (ret_poll == 0) {
             return FTP_ERR_TIMEOUT;
         }
-        ssize_t ret =
-            recv(infd, msg + bytes_recv, FTP_MSG_SIZE - bytes_recv, 0);
+        uint8_t *msg_       = (uint8_t *)msg + bytes_recv;
+        size_t   bytes_left = FTP_MSG_SIZE - bytes_recv;
+        ssize_t  ret        = recv(infd, msg_, bytes_left, 0);
         if (ret < 0) {
             perror("Error recieving message");
             return FTP_ERR_SOCKET;
         }
         if (ret == 0) {
-            return FTP_ERR_SERVER;
+            return FTP_ERR_CLOSE;
         }
 #ifdef DEBUG_TRANSFER
         printf("DEBUG: Recieved %ld bytes\n", ret);
 #endif
         bytes_recv += ret;
     }
-    printf("DEBUG: Recieved message (%lu):\n", bytes_recv);
-    ftp_msg_print(stdout, msg);
+    // printf("DEBUG: Recieved message (%lu):\n", bytes_recv);
+    // ftp_msg_print(stdout, msg);
     return FTP_ERR_NONE;
 }
 
