@@ -17,6 +17,7 @@ struct serv_t {
     char   *name;
     char   *ip;
     char   *port;
+    int     id;
     int     fd;
     int     connected;
     serv_t *next;
@@ -77,6 +78,7 @@ int parseConfig(char *path, serv_t servlist[]) {
             goto nextline;
         }
         // Fill out the rest of the serv_t values:
+        servlist->fd        = -1;
         servlist->fd        = -1;
         servlist->connected = 0;
         if (old != NULL) {

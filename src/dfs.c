@@ -238,7 +238,12 @@ void handle_request(int fd, char *ip) {
 // Handle a GET request
 void handle__GET(int fd, ftp_msg_t *msg) {
     char *filename = (char *)msg->packet;
-    printf("Filename: %s\n", filename);
+    char  filepath[PATH_MAX] = {0};
+    snprintf(filepath, PATH_MAX, "%s/%s", chunk_path, filename);
+    printf("Filepath: %s\n", filepath);
+
+    // Create the directory just in case
+    mkdir(chunk_path, 0777);
 
     // Open the file
     int file = open(filename, O_RDONLY);

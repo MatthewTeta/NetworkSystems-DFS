@@ -28,14 +28,25 @@
 
 #define CONFIG_PATH "~/dfc.conf"
 
+typedef struct file_info {
+    char     filename[NAME_MAX];
+    time_t   stime;
+    uint16_t client_id;
+    size_t   num_chunks;
+    uint8_t  chunk_locs[MAX_CHUNKS][MAX_SERVERS];
+} file_info_t;
+
 // Function prototypes
-int handle__GET(serv_t servlist[], char *filename);
-int handle__PUT(serv_t servlist[], char *filename);
-int handle_LIST(serv_t servlist[]);
+int  handle__GET(serv_t servlist[], char *filename);
+int  handle__PUT(serv_t servlist[], char *filename);
+int  handle_LIST(serv_t servlist[]);
+void file_list_insert(char *filename, size_t serv_id, serv_t *serv);
 
 // Global variables
-uint16_t client_id;
-char     tmp_path[PATH_MAX / 2] = {0};
+uint16_t    client_id;
+char        tmp_path[PATH_MAX / 2] = {0};
+file_info_t file_info[MAX_FILES]   = {0};
+size_t      num_files              = 0;
 
 void printUsage(char *argv[]) {
     printf("Usage: %s <command> [filename] ... [filename]\n", argv[0]);
@@ -120,6 +131,16 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // update the server id's
+    // This also allows us to index into the servlist array
+    num_servers = 0;
+    while (servlist) {
+        if (servlist->connected) {
+            printf("[%d]: %s\n", num_servers, servlist->name);
+            servlist->id = num_servers++;
+        }
+        servlist = servlist->next;
+    }
     // Print the server list
     servlist_print(servlist);
 
@@ -155,6 +176,60 @@ int main(int argc, char *argv[]) {
  *
  */
 int handle__GET(serv_t servlist[], char *filename) {
+    // Dumb method: Try to get each chunks from each server until one gives it
+    // to us
+    handle_LIST(servlist);
+
+    // Find the filename in the file_info array
+    int file_id = -1;
+    for (int i = 0; i < num_files; i++) {
+        if (strcmp(file_info[i].filename, filename) == 0) {
+            file_id = i;
+            break;
+        }
+    }
+    if (file_id < 0) {
+        printf("File not found\n");
+        return EXIT_FAILURE;
+    }
+
+    // Create the file locally
+    int file = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    if (file < 0) {
+        perror("open");
+        return EXIT_FAILURE;
+    }
+
+    file_info_t *finf = &file_info[file_id];
+
+    char chunk_path[PATH_MAX] = {0};
+    snprintf(base_name, PATH_MAX / 2, "%s.%lu.%u.%lu", filename, finf.stime,
+             finf.client_id, finf.num_chunks);
+
+    for (size_t i = 0; i < file_info[file_id].num_chunks; i++) {
+        // Try to get the chunk from each server
+        int got_chunk = 0;
+        for (serv_t *serv = servlist; serv; serv = serv->next) {
+            if (!serv->connected)
+                continue;
+            char chunk_path2[PATH_MAX] = {0};
+            sprintf(chunk_path2, "%s.%lu", chunk_path, i);
+            ftp_send_msg(serv->fd, FTP_CMD_GET, chunk_path2, -1);
+            lseek(file, i * CHUNK_SIZE, SEEK_SET);
+            ftp_msg_t msg = {0};
+            if (ftp_recv_msg(serv->fd, msg) == 0) {
+                // We got the chunk from this server
+                got_chunk = 1;
+                break;
+            }
+            write(file, msg.packet, msg.nbytes);
+        }
+    }
+
+    close(file);
+    return EXIT_SUCCESS;
+
+    // First we do a LIST to see if we can reconstruct the file
     // Send the GET <filename> command to each server
     for (serv_t *serv = servlist; serv; serv = serv->next) {
         if (!serv->connected)
@@ -306,7 +381,7 @@ int handle__PUT(serv_t servlist[], char *argpath) {
 
             size_t serv_id = (hash[0] + chunk_id + r) % num_servers;
             char   chunk_name[PATH_MAX] = {0};
-            snprintf(chunk_name, PATH_MAX, "%s.%04lX", base_name, chunk_id);
+            snprintf(chunk_name, PATH_MAX, "%s.%lu", base_name, chunk_id);
             // printf("\t\t[%lu]\t->\t{%lu}\t\t%s\t\t(%ld)\n", chunk_id,
             // serv_id,
             //        chunk_name, bytes_read);
@@ -423,10 +498,106 @@ int handle_LIST(serv_t servlist[]) {
                 continue;
             }
             char *filename = strrchr(line, ' ') + 1;
+            // Remove the newline
+            char *newline = strchr(filename, '\n');
+            if (newline) {
+                *newline = '\0';
+            }
             printf("%s\n", filename);
+            // Insert the file into the file_list
+            file_list_insert(filename, serv->id, servlist);
         }
         fclose(fp);
     }
 
     return EXIT_SUCCESS;
+}
+
+/**
+ * @brief Parses a filename and inserts it into the list
+ *
+ */
+void file_list_insert(char *filename, size_t serv_id, serv_t *serv) {
+    // Copy the filename
+    char *filename_ = strdup(filename_);
+
+    // Parse the filename:
+    // filename.stime.client_id.num_chunks.chunk_id
+    char *dot = strrchr(filename, '.');
+    if (!dot) {
+        printf("Invalid filename: %s\n", filename_);
+        free(filename_);
+        return;
+    }
+    *dot               = '\0';
+    char *chunk_id_str = dot + 1;
+    printf("chunk_id_str: %s\n", chunk_id_str);
+
+    dot = strrchr(filename, '.');
+    if (!dot) {
+        printf("Invalid filename: %s\n", filename_);
+        free(filename_);
+        return;
+    }
+    *dot                 = '\0';
+    char *num_chunks_str = dot + 1;
+    printf("num_chunks_str: %s\n", num_chunks_str);
+
+    dot = strrchr(filename, '.');
+    if (!dot) {
+        printf("Invalid filename: %s\n", filename_);
+        free(filename_);
+        return;
+    }
+    *dot                = '\0';
+    char *client_id_str = dot + 1;
+    printf("client_id_str: %s\n", client_id_str);
+
+    dot = strrchr(filename, '.');
+    if (!dot) {
+        printf("Invalid filename: %s\n", filename_);
+        free(filename_);
+        return;
+    }
+    *dot            = '\0';
+    char *stime_str = filename;
+    printf("stime_str: %s\n", stime_str);
+
+    if (!stime_str || !client_id_str || !num_chunks_str || !chunk_id_str) {
+        printf("Invalid filename: %s\n", filename_);
+        free(filename_);
+        return;
+    }
+    printf("filename: %s\n", filename);
+
+    // Parse the stime
+    time_t stime = atoi(stime_str);
+
+    // Parse the client_id
+    int client_id = atoi(client_id_str);
+
+    // Parse the num_chunks
+    int num_chunks = atoi(num_chunks_str);
+
+    // Parse the chunk_id
+    int chunk_id = atoi(chunk_id_str);
+
+    // Insert the file into the file_list
+    file_info_t *info = &file_info[0];
+    for (int i = 0; i < file_info_len; i++) {
+        if (strcmp(info[i].filename, filename) == 0) {
+            // Update the file info
+            info[i].stime                        = stime;
+            info[i].client_id                    = client_id;
+            info[i].num_chunks                   = num_chunks;
+            nfo[i].chunk_locs[chunk_id][serv_id] = 1;
+        }
+    }
+    file_info[file_info_len++] = (file_info_t){
+        .filename   = filename_,
+        .stime      = stime,
+        .client_id  = client_id,
+        .num_chunks = num_chunks,
+        .chunk_id   = chunk_id,
+    };
 }
